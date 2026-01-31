@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Application for choosing and saving favorite alcoholic drinks">
+    <meta name="theme-color" content="#4a5568">
+    <title>Drink Master - Choose Drinks</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/png" href="icons/icon-192x192.png">
+</head>
+<body>
+    <!-- View 1: Drinks list (main) -->
+    <div id="drinks-view" class="view active">
+        <header class="app-header">
+            <h1>Drink Master</h1>
+            <div class="header-actions">
+                <button id="favorites-btn" class="icon-btn" aria-label="Favorites">
+                    ⭐
+                </button>
+            </div>
+        </header>
+
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="Search drinks..." class="search-input">
+        </div>
+
+        <div class="filter-container">
+            <button class="filter-btn active" data-category="all">All</button>
+            <button class="filter-btn" data-category="cocktail">Cocktails</button>
+            <button class="filter-btn" data-category="shot">Shots</button>
+            <button class="filter-btn" data-category="mocktail">Mocktails</button>
+        </div>
+
+        <div id="offline-indicator" class="offline-indicator hidden">
+            Offline mode - some features may be unavailable.
+        </div>
+
+        <div id="drinks-list" class="drinks-list">
+            <!-- Drinki będą tutaj dynamicznie dodawane -->
+        </div>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Loading drinks...</p>
+        </div>
+
+        <div id="empty-state" class="empty-state hidden">
+            <p>No drinks found</p>
+        </div>
+    </div>
+
+    <!-- View 2: Drink details -->
+    <div id="detail-view" class="view">
+        <header class="app-header">
+            <button id="back-btn" class="back-btn" aria-label="Back">←</button>
+            <h2>Drink Details</h2>
+            <button id="share-btn" class="icon-btn" aria-label="Share">📤</button>
+        </header>
+
+        <div id="drink-detail" class="drink-detail">
+            <!-- Szczegóły drinka będą tutaj dynamicznie dodawane -->
+        </div>
+    </div>
+
+    <!-- View 3: Favorite drinks -->
+    <div id="favorites-view" class="view">
+        <header class="app-header">
+            <button id="back-from-favorites-btn" class="back-btn" aria-label="Back">←</button>
+            <h2>Favorite Drinks</h2>
+        </header>
+
+        <div id="favorites-list" class="drinks-list">
+            <!-- Ulubione drinki będą tutaj dynamicznie dodawane -->
+        </div>
+
+        <div id="favorites-empty" class="empty-state">
+            <p>No favorite drinks</p>
+            <p class="empty-hint">Add drinks to favorites by clicking ⭐</p>
+        </div>
+    </div>
+
+    <!-- Notification permission prompt -->
+    <div id="notification-prompt" class="notification-prompt hidden">
+        <p>Enable notifications to receive reminders about new drinks!</p>
+        <button id="enable-notifications-btn" class="btn-primary">Enable notifications</button>
+        <button id="dismiss-notifications-btn" class="btn-secondary">Not now</button>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
