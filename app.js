@@ -18,16 +18,25 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeApp();
 });
 
-// Funkcja inicjalizująca aplikację
+// Initialize application
 async function initializeApp() {
-    // Sprawdź czy Service Worker jest obsługiwany
+    // Check if Service Worker is supported
     if ('serviceWorker' in navigator) {
         try {
-            const registration = await navigator.serviceWorker.register('/sw.js');
+            const registration = await navigator.serviceWorker.register('/sw.js', {
+                scope: '/'
+            });
             console.log('Service Worker registered:', registration);
+            
+            // Check for updates
+            registration.addEventListener('updatefound', () => {
+                console.log('Service Worker update found');
+            });
         } catch (error) {
             console.error('Service Worker registration error:', error);
         }
+    } else {
+        console.warn('Service Worker is not supported in this browser');
     }
 
     // Załaduj ulubione z localStorage

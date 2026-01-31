@@ -1,8 +1,8 @@
 // Service Worker dla aplikacji Drink Master
 // Implementuje strategię buforowania dla trybu offline
 
-const CACHE_NAME = 'drink-master-v2';
-const RUNTIME_CACHE = 'drink-master-runtime-v2';
+const CACHE_NAME = 'drink-master-v3';
+const RUNTIME_CACHE = 'drink-master-runtime-v3';
 
 // Zasoby do buforowania przy instalacji
 const STATIC_CACHE_URLS = [
@@ -23,22 +23,23 @@ const STATIC_CACHE_URLS = [
 
 // Instalacja Service Workera
 self.addEventListener('install', (event) => {
-    console.log('Service Worker: Instalacja');
+    console.log('Service Worker: Installation');
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
-                console.log('Service Worker: Buforowanie plików statycznych');
-                // Buforuj tylko krytyczne pliki, reszta będzie buforowana dynamicznie
-                return cache.addAll(STATIC_CACHE_URLS.filter(url => {
-                    // Sprawdź czy URL jest dostępny (dla lokalnego developmentu)
-                    return true;
-                })).catch((error) => {
-                    console.log('Service Worker: Niektóre pliki nie zostały zbuforowane:', error);
-                    // Kontynuuj nawet jeśli niektóre pliki nie zostały zbuforowane
+                console.log('Service Worker: Caching static files');
+                // Cache critical files, rest will be cached dynamically
+                return cache.addAll(STATIC_CACHE_URLS).catch((error) => {
+                    console.log('Service Worker: Some files were not cached:', error);
+                    // Continue even if some files were not cached
+                    // Cache index.html separately as it's critical
+                    return cache.add('/index.html').catch(() => {
+                        console.log('Service Worker: Could not cache index.html');
+                    });
                 });
             })
     );
-    // Wymuś aktywację nowego Service Workera
+    // Force activation of new Service Worker
     self.skipWaiting();
 });
 
@@ -99,6 +100,7 @@ async function networkFirst(request) {
 // Strategia buforowania: Cache First
 // Używana dla zasobów statycznych (HTML, CSS, JS, obrazy)
 async function cacheFirst(request) {
+    // Spróbuj znaleźć w cache
     const cachedResponse = await caches.match(request);
     
     if (cachedResponse) {
@@ -106,6 +108,7 @@ async function cacheFirst(request) {
     }
     
     try {
+        // Spróbuj pobrać z sieci
         const networkResponse = await fetch(request);
         
         if (networkResponse.ok) {
@@ -115,8 +118,17 @@ async function cacheFirst(request) {
         
         return networkResponse;
     } catch (error) {
-        // Jeśli to żądanie HTML i nie ma w cache, zwróć index.html
-        if (request.headers.get('accept').includes('text/html')) {
+        // Jeśli sieć nie działa, spróbuj znaleźć fallback
+        // Dla HTML - zwróć index.html
+        if (request.headers.get('accept') && request.headers.get('accept').includes('text/html')) {
+            const indexCache = await caches.match('/index.html');
+            if (indexCache) {
+                return indexCache;
+            }
+        }
+        // Dla root path - zwróć index.html
+        const url = new URL(request.url);
+        if (url.pathname === '/' || url.pathname === '') {
             const indexCache = await caches.match('/index.html');
             if (indexCache) {
                 return indexCache;
@@ -157,12 +169,47 @@ self.addEventListener('fetch', (event) => {
     
     // Strategia dla różnych typów zasobów
     if (request.method === 'GET') {
+        // Navigation requests (browsing pages) - always return index.html from cache
+        if (request.mode === 'navigate' || (request.method === 'GET' && request.headers.get('accept').includes('text/html'))) {
+            event.respondWith(
+                caches.match('/index.html').then((cachedResponse) => {
+                    if (cachedResponse) {
+                        // Return cached version immediately
+                        return cachedResponse;
+                    }
+                    // If not in cache, try to fetch from network
+                    return fetch(request).then((networkResponse) => {
+                        // Cache the response for next time
+                        if (networkResponse.ok) {
+                            const cache = caches.open(CACHE_NAME);
+                            cache.then(c => c.put('/index.html', networkResponse.clone()));
+                        }
+                        return networkResponse;
+                    }).catch(() => {
+                        // If network fails, try to get index.html from cache
+                        return caches.match('/index.html').then((fallbackResponse) => {
+                            if (fallbackResponse) {
+                                return fallbackResponse;
+                            }
+                            // Last resort - return offline message
+                            return new Response('Offline - Please check your connection', {
+                                status: 503,
+                                statusText: 'Service Unavailable',
+                                headers: { 'Content-Type': 'text/html' }
+                            });
+                        });
+                    });
+                })
+            );
+            return;
+        }
+        
         // API requests - Network First
         if (url.hostname.includes('thecocktaildb.com') || url.pathname.includes('/api/')) {
             event.respondWith(networkFirst(request));
         }
         // Obrazy - Stale While Revalidate
-        else if (request.destination === 'image' || url.pathname.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+        else if (request.destination === 'image' || url.pathname.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
             event.respondWith(staleWhileRevalidate(request));
         }
         // Zasoby statyczne (HTML, CSS, JS) - Cache First
@@ -170,7 +217,9 @@ self.addEventListener('fetch', (event) => {
             request.destination === 'document' ||
             request.destination === 'style' ||
             request.destination === 'script' ||
-            url.pathname.match(/\.(html|css|js|json)$/i)
+            url.pathname.match(/\.(html|css|js|json)$/i) ||
+            url.pathname === '/' ||
+            url.pathname === ''
         ) {
             event.respondWith(cacheFirst(request));
         }
