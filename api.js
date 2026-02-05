@@ -1,26 +1,32 @@
 // API Module
 // Модуль для роботи з API напоїв
 
-// Використовуємо CORS проксі для обходу CORS помилок
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+// Використовуємо Service Worker для обходу CORS
+// Service Worker може робити запити без CORS обмежень
 const API_BASE = 'https://www.thecocktaildb.com/api/json/v1/1/search.php?s=';
 
-// Отримання напою за назвою через проксі
+// Отримання напою за назвою
+// Запит буде оброблений Service Worker, який спробує отримати дані
+// Якщо CORS блокує, Service Worker поверне дані з кешу
 async function fetchDrinkByName(drinkName) {
     try {
-        // Використовуємо проксі для обходу CORS
-        const proxyUrl = `${CORS_PROXY}${encodeURIComponent(API_BASE + drinkName)}`;
-        const response = await fetch(proxyUrl);
+        const url = `${API_BASE}${encodeURIComponent(drinkName)}`;
         
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+        // Робимо запит - Service Worker перехопить його в fetch event
+        // і спробує отримати дані (Service Worker має більші права для запитів)
+        const response = await fetch(url);
+        
+        // Перевірка на успішну відповідь
+        if (response && response.ok) {
+            const data = await response.json();
+            return data.drinks || [];
         }
         
-        const data = await response.json();
-        return data.drinks || [];
+        // Якщо відповідь не OK, спробувати з кешу
+        return await fetchDrinkFromCache(drinkName);
     } catch (error) {
         console.error(`Помилка завантаження ${drinkName}:`, error);
-        // Якщо проксі не працює, спробуємо через Service Worker cache
+        // Якщо мережа не працює або CORS блокує, спробуємо через кеш
         return await fetchDrinkFromCache(drinkName);
     }
 }
