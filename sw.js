@@ -1,16 +1,22 @@
-// Service Worker dla aplikacji Drink Master
-// Implementuje strategię buforowania dla trybu offline
+// Service Worker для PWA додатку Drink Master
+// Обробляє кешування та офлайн функціональність
 
-const CACHE_NAME = 'drink-master-v4';
-const RUNTIME_CACHE = 'drink-master-runtime-v4';
-const API_CACHE = 'drink-master-api-v4';
+const CACHE_NAME = 'drink-master-v5';
+const RUNTIME_CACHE = 'drink-master-runtime-v5';
+const API_CACHE = 'drink-master-api-v5';
 
-// Zasoby do buforowania przy instalacji
+// Статичні ресурси для кешування при встановленні
 const STATIC_CACHE_URLS = [
     '/',
     '/index.html',
     '/styles.css',
     '/app.js',
+    '/database.js',
+    '/api.js',
+    '/state.js',
+    '/views.js',
+    '/filters.js',
+    '/native-features.js',
     '/manifest.json',
     '/icons/icon-72x72.png',
     '/icons/icon-96x96.png',
@@ -22,126 +28,79 @@ const STATIC_CACHE_URLS = [
     '/icons/icon-512x512.png'
 ];
 
-// Instalacja Service Workera
+// Подія встановлення Service Worker
 self.addEventListener('install', (event) => {
-    console.log('Service Worker: Installation');
+    console.log('Service Worker: Встановлення');
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
-                console.log('Service Worker: Caching static files');
-                // Cache critical files, rest will be cached dynamically
+                console.log('Service Worker: Кешування статичних файлів');
                 return cache.addAll(STATIC_CACHE_URLS).catch((error) => {
-                    console.log('Service Worker: Some files were not cached:', error);
-                    // Continue even if some files were not cached
-                    // Cache index.html separately as it's critical
+                    console.log('Service Worker: Деякі файли не були закешовані:', error);
                     return cache.add('/index.html').catch(() => {
-                        console.log('Service Worker: Could not cache index.html');
+                        console.log('Service Worker: Не вдалося закешувати index.html');
                     });
                 });
             })
     );
-    // Force activation of new Service Worker
     self.skipWaiting();
 });
 
-// Aktywacja Service Workera
+// Подія активації Service Worker
 self.addEventListener('activate', (event) => {
-    console.log('Service Worker: Aktywacja');
+    console.log('Service Worker: Активація');
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cacheName) => {
-                    // Usuń stare cache jeśli istnieją
-                    if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE) {
-                        console.log('Service Worker: Usuwanie starego cache:', cacheName);
+                    if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE && cacheName !== API_CACHE) {
+                        console.log('Service Worker: Видалення старого кешу:', cacheName);
                         return caches.delete(cacheName);
                     }
                 })
             );
         })
     );
-    // Przejmij kontrolę nad wszystkimi klientami
     return self.clients.claim();
 });
 
-// Funkcja dla synchronizacji wszystkich drinków z API
-async function preloadAllDrinks() {
-    console.log('Service Worker: Початок попереднього завантаження напоїв');
-    
-    // Lista popularnych drinków do ładowania
-    const popularDrinks = [
-        'margarita', 'mojito', 'cosmopolitan', 'old fashioned', 
-        'negroni', 'daiquiri', 'martini', 'whiskey sour',
-        'manhattan', 'bloody mary', 'pina colada', 'caipirinha',
-        'kamikaze', 'b52', 'lemon drop', 'jagerbomb', 'jager bomb',
-        'tequila', 'fireball', 'irish car bomb', 'buttery nipple',
-        'red headed slut', 'sake bomb', 'screwdriver', 'sex on the beach',
-        'moscow mule', 'gin tonic', 'whiskey', 'vodka', 'rum',
-        'bourbon', 'scotch', 'brandy', 'cognac', 'champagne',
-        'wine', 'beer', 'cider', 'sangria', 'mimosa'
-    ];
-    
-    const API_BASE = 'https://www.thecocktaildb.com/api/json/v1/1/search.php?s=';
-    const cache = await caches.open(API_CACHE);
-    
-    // Załaduj wszystkie popularne drinki
-    const fetchPromises = popularDrinks.map(async (drinkName) => {
-        const url = `${API_BASE}${encodeURIComponent(drinkName)}`;
-        try {
-            const response = await fetch(url);
-            if (response.ok) {
-                await cache.put(url, response.clone());
-                console.log(`Service Worker: Збережено в кеш: ${drinkName}`);
-            }
-        } catch (error) {
-            console.log(`Service Worker: Помилка завантаження ${drinkName}:`, error);
-        }
-    });
-    
-    await Promise.all(fetchPromises);
-    console.log('Service Worker: Завершено попереднє завантаження напоїв');
-}
-
-// Strategia buforowania: Network First z fallback do Cache
-// Używana dla żądań API (dynamiczne dane)
+// Стратегія Network First з fallback до Cache
+// Спочатку намагається отримати дані з мережі, якщо не вдається - використовує кеш
 async function networkFirst(request) {
     try {
-        // Najpierw spróbuj pobrać z sieci
+        // Спробувати отримати відповідь з мережі
         const networkResponse = await fetch(request);
         
-        // Jeśli sukces, zbuforuj odpowiedź
+        // Якщо відповідь успішна, зберегти в кеш для майбутнього використання
         if (networkResponse.ok) {
             const cache = await caches.open(API_CACHE);
-            // Klonuj odpowiedź, bo może być użyta tylko raz
             const responseClone = networkResponse.clone();
-            // Zbuforuj odpowiedź
             cache.put(request, responseClone).catch(err => {
-                console.log('Service Worker: Błąd podczas buforowania:', err);
+                console.log('Service Worker: Помилка під час кешування:', err);
             });
         }
         
         return networkResponse;
     } catch (error) {
-        // Jeśli sieć nie działa, użyj cache
-        console.log('Service Worker: Sieć nie działa, używam cache:', request.url);
+        // Мережа недоступна - шукати в кеші
+        console.log('Service Worker: Мережа не працює, використовую кеш:', request.url);
         
-        // Spróbuj znaleźć w API cache
+        // Спочатку перевірити API кеш
         const cachedResponse = await caches.match(request, { cacheName: API_CACHE });
-        
         if (cachedResponse) {
-            console.log('Service Worker: Znaleziono w cache:', request.url);
+            console.log('Service Worker: Знайдено в кеші:', request.url);
             return cachedResponse;
         }
-        
-        // Spróbuj znaleźć w runtime cache
+
+        // Перевірити runtime кеш
         const runtimeCached = await caches.match(request, { cacheName: RUNTIME_CACHE });
         if (runtimeCached) {
             return runtimeCached;
         }
         
-        // Jeśli nie ma w cache, zwróć odpowiedź offline
+        // Якщо це запит до API напоїв і немає в кеші, повернути порожню відповідь
         if (request.url.includes('thecocktaildb.com')) {
-            console.log('Service Worker: Brak cache, zwracam pustą odpowiedź');
+            console.log('Service Worker: Немає в кеші, повертаю порожню відповідь');
             return new Response(JSON.stringify({ drinks: [] }), {
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -151,10 +110,9 @@ async function networkFirst(request) {
     }
 }
 
-// Strategia buforowania: Cache First
-// Używana dla zasobów statycznych (HTML, CSS, JS, obrazy)
+// Стратегія Cache First
+// Спочатку перевіряє кеш, якщо немає - завантажує з мережі
 async function cacheFirst(request) {
-    // Spróbuj znaleźć w cache
     const cachedResponse = await caches.match(request);
     
     if (cachedResponse) {
@@ -162,7 +120,6 @@ async function cacheFirst(request) {
     }
     
     try {
-        // Spróbuj pobrać z sieci
         const networkResponse = await fetch(request);
         
         if (networkResponse.ok) {
@@ -172,15 +129,13 @@ async function cacheFirst(request) {
         
         return networkResponse;
     } catch (error) {
-        // Jeśli sieć nie działa, spróbuj znaleźć fallback
-        // Dla HTML - zwróć index.html
+        // Якщо це запит HTML і мережа недоступна, повернути index.html
         if (request.headers.get('accept') && request.headers.get('accept').includes('text/html')) {
             const indexCache = await caches.match('/index.html');
             if (indexCache) {
                 return indexCache;
             }
         }
-        // Dla root path - zwróć index.html
         const url = new URL(request.url);
         if (url.pathname === '/' || url.pathname === '') {
             const indexCache = await caches.match('/index.html');
@@ -192,99 +147,98 @@ async function cacheFirst(request) {
     }
 }
 
-// Strategia buforowania: Stale While Revalidate
-// Używana dla obrazów z API (szybki dostęp z cache, aktualizacja w tle)
+// Стратегія Stale While Revalidate
+// Повертає дані з кешу одразу, але оновлює кеш у фоновому режимі
 async function staleWhileRevalidate(request) {
     const cache = await caches.open(RUNTIME_CACHE);
     const cachedResponse = await cache.match(request);
-    
-    // Zwróć cache natychmiast jeśli istnieje
+
+    // Оновити кеш у фоновому режимі
     const fetchPromise = fetch(request).then((networkResponse) => {
         if (networkResponse.ok) {
             cache.put(request, networkResponse.clone());
         }
         return networkResponse;
     }).catch(() => {
-        // Ignoruj błędy sieci
+        // Ігнорувати помилки мережі
     });
     
+    // Повернути кешовану відповідь одразу, якщо вона є
     return cachedResponse || fetchPromise;
 }
 
-// Obsługa żądań fetch
+// Подія fetch - обробка всіх мережевих запитів
+// Це основна функція Service Worker, яка перехоплює всі HTTP запити
 self.addEventListener('fetch', (event) => {
     const { request } = event;
     const url = new URL(request.url);
     
-    // Pomiń żądania do innych domen (oprócz API)
-    if (url.origin !== self.location.origin && !url.hostname.includes('thecocktaildb.com')) {
+    // Обробляти тільки GET запити та запити до нашого домену або API
+    if (request.method !== 'GET') {
         return;
     }
     
-    // Strategia dla różnych typów zasobów
-    if (request.method === 'GET') {
-        // Navigation requests (browsing pages) - always return index.html from cache
-        if (request.mode === 'navigate' || (request.method === 'GET' && request.headers.get('accept').includes('text/html'))) {
-            event.respondWith(
-                caches.match('/index.html').then((cachedResponse) => {
-                    if (cachedResponse) {
-                        // Return cached version immediately
-                        return cachedResponse;
+    // Перевірити, чи це запит до нашого додатку або API
+    if (url.origin !== self.location.origin && !url.hostname.includes('thecocktaildb.com') && !url.hostname.includes('allorigins.win')) {
+        return;
+    }
+    
+    // Обробка навігаційних запитів (запити HTML сторінок)
+    if (request.mode === 'navigate' || (request.method === 'GET' && request.headers.get('accept') && request.headers.get('accept').includes('text/html'))) {
+        event.respondWith(
+            caches.match('/index.html').then((cachedResponse) => {
+                if (cachedResponse) {
+                    return cachedResponse;
+                }
+                return fetch(request).then((networkResponse) => {
+                    if (networkResponse.ok) {
+                        const cache = caches.open(CACHE_NAME);
+                        cache.then(c => c.put('/index.html', networkResponse.clone()));
                     }
-                    // If not in cache, try to fetch from network
-                    return fetch(request).then((networkResponse) => {
-                        // Cache the response for next time
-                        if (networkResponse.ok) {
-                            const cache = caches.open(CACHE_NAME);
-                            cache.then(c => c.put('/index.html', networkResponse.clone()));
+                    return networkResponse;
+                }).catch(() => {
+                    return caches.match('/index.html').then((fallbackResponse) => {
+                        if (fallbackResponse) {
+                            return fallbackResponse;
                         }
-                        return networkResponse;
-                    }).catch(() => {
-                        // If network fails, try to get index.html from cache
-                        return caches.match('/index.html').then((fallbackResponse) => {
-                            if (fallbackResponse) {
-                                return fallbackResponse;
-                            }
-                            // Last resort - return offline message
-                            return new Response('Offline - Please check your connection', {
-                                status: 503,
-                                statusText: 'Service Unavailable',
-                                headers: { 'Content-Type': 'text/html' }
-                            });
+                        return new Response('Офлайн - Перевірте підключення до інтернету', {
+                            status: 503,
+                            statusText: 'Service Unavailable',
+                            headers: { 'Content-Type': 'text/html' }
                         });
                     });
-                })
-            );
-            return;
-        }
-        
-        // API requests - Network First з повним кешуванням
-        if (url.hostname.includes('thecocktaildb.com') || url.pathname.includes('/api/')) {
-            event.respondWith(networkFirst(request));
-        }
-        // Obrazy - Stale While Revalidate
-        else if (request.destination === 'image' || url.pathname.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
-            event.respondWith(staleWhileRevalidate(request));
-        }
-        // Zasoby statyczne (HTML, CSS, JS) - Cache First
-        else if (
-            request.destination === 'document' ||
-            request.destination === 'style' ||
-            request.destination === 'script' ||
-            url.pathname.match(/\.(html|css|js|json)$/i) ||
-            url.pathname === '/' ||
-            url.pathname === ''
-        ) {
-            event.respondWith(cacheFirst(request));
-        }
-        // Domyślnie - Network First
-        else {
-            event.respondWith(networkFirst(request));
-        }
+                });
+            })
+        );
+        return;
+    }
+    
+    // Обробка запитів до API напоїв
+    if (url.hostname.includes('thecocktaildb.com') || url.hostname.includes('allorigins.win') || url.pathname.includes('/api/')) {
+        event.respondWith(networkFirst(request));
+    }
+    // Обробка зображень
+    else if (request.destination === 'image' || url.pathname.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
+        event.respondWith(staleWhileRevalidate(request));
+    }
+    // Обробка статичних ресурсів (HTML, CSS, JS, JSON)
+    else if (
+        request.destination === 'document' ||
+        request.destination === 'style' ||
+        request.destination === 'script' ||
+        url.pathname.match(/\.(html|css|js|json)$/i) ||
+        url.pathname === '/' ||
+        url.pathname === ''
+    ) {
+        event.respondWith(cacheFirst(request));
+    }
+    // Для всіх інших запитів використовувати Network First
+    else {
+        event.respondWith(networkFirst(request));
     }
 });
 
-// Obsługa wiadomości z aplikacji
+// Обробка повідомлень від основного додатку
 self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
@@ -297,22 +251,4 @@ self.addEventListener('message', (event) => {
             })
         );
     }
-    
-    // Komenda do wcześniejszego ładowania wszystkich drinków
-    if (event.data && event.data.type === 'PRELOAD_DRINKS') {
-        event.waitUntil(preloadAllDrinks());
-    }
 });
-
-// Background Sync (dla przyszłych funkcji)
-self.addEventListener('sync', (event) => {
-    if (event.tag === 'sync-drinks') {
-        event.waitUntil(syncDrinks());
-    }
-});
-
-async function syncDrinks() {
-    // Funkcja do synchronizacji drinków w tle
-    console.log('Service Worker: Synchronizacja drinków w tle');
-    await preloadAllDrinks();
-}

@@ -1,284 +1,32 @@
-// Dane drinków (będą buforowane w Service Worker)
-const DRINKS_API = 'https://www.thecocktaildb.com/api/json/v1/1/search.php?s=';
+// Main Application File
+// Головний файл додатку, який ініціалізує та координує всі модулі
 
-// IndexedDB do przechowywania wszystkich drinków
-const DB_NAME = 'DrinkMasterDB';
-const DB_VERSION = 1;
-const STORE_NAME = 'drinks';
+// Імпорт модулів (використовуємо динамічний імпорт для сумісності)
+import { initDB, saveDrinksToDB, loadDrinksFromDB } from './database.js';
+import { fetchDrinksList } from './api.js';
+import { 
+    getState, 
+    setDrinks, 
+    setFilteredDrinks, 
+    setDB, 
+    setOnlineStatus,
+    loadFavorites 
+} from './state.js';
+import { 
+    switchView, 
+    renderDrinks, 
+    showDrinkDetail, 
+    showFavorites 
+} from './views.js';
+import { 
+    shareDrink, 
+    initializeNativeFeatures, 
+    vibrateOnFavorite,
+    findNearbyBars,
+    showNotificationPrompt 
+} from './native-features.js';
 
-// Stan aplikacji
-const appState = {
-    drinks: [],
-    filteredDrinks: [],
-    favorites: [],
-    currentView: 'drinks-view',
-    currentDrink: null,
-    searchTerm: '',
-    categoryFilter: 'all',
-    isOnline: navigator.onLine,
-    db: null
-};
-
-// Inicjalizacja aplikacji
-document.addEventListener('DOMContentLoaded', () => {
-    initializeApp();
-});
-
-// Inicjalizacja IndexedDB
-async function initDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
-        request.onerror = () => {
-            console.error('IndexedDB помилка:', request.error);
-            reject(request.error);
-        };
-        
-        request.onsuccess = () => {
-            appState.db = request.result;
-            console.log('IndexedDB відкрито успішно');
-            resolve(appState.db);
-        };
-        
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'idDrink' });
-                objectStore.createIndex('strDrink', 'strDrink', { unique: false });
-                objectStore.createIndex('strCategory', 'strCategory', { unique: false });
-                console.log('IndexedDB схема створена');
-            }
-        };
-    });
-}
-
-// Zapisz drinki do IndexedDB
-async function saveDrinksToDB(drinks) {
-    if (!appState.db) {
-        await initDB();
-    }
-    
-    return new Promise((resolve, reject) => {
-        const transaction = appState.db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        
-        drinks.forEach(drink => {
-            store.put(drink);
-        });
-        
-        transaction.oncomplete = () => {
-            console.log(`Збережено ${drinks.length} напоїв в IndexedDB`);
-            resolve();
-        };
-        
-        transaction.onerror = () => {
-            console.error('Помилка збереження в IndexedDB:', transaction.error);
-            reject(transaction.error);
-        };
-    });
-}
-
-// Załaduj wszystkie drinki z IndexedDB
-async function loadDrinksFromDB() {
-    if (!appState.db) {
-        await initDB();
-    }
-    
-    return new Promise((resolve, reject) => {
-        const transaction = appState.db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.getAll();
-        
-        request.onsuccess = () => {
-            const drinks = request.result;
-            console.log(`Завантажено ${drinks.length} напоїв з IndexedDB`);
-            resolve(drinks);
-        };
-        
-        request.onerror = () => {
-            console.error('Помилка завантаження з IndexedDB:', request.error);
-            reject(request.error);
-        };
-    });
-}
-
-// Initialize application
-async function initializeApp() {
-    // Inicjalizacja IndexedDB
-    try {
-        await initDB();
-    } catch (error) {
-        console.error('Помилка ініціалізації IndexedDB:', error);
-    }
-    
-    // Check if Service Worker is supported
-    if ('serviceWorker' in navigator) {
-        try {
-            const registration = await navigator.serviceWorker.register('/sw.js', {
-                scope: '/'
-            });
-            console.log('Service Worker registered:', registration);
-            
-            // Wyślij komendę do wcześniejszego ładowania wszystkich drinków
-            if (registration.active) {
-                registration.active.postMessage({ type: 'PRELOAD_DRINKS' });
-            } else if (registration.installing) {
-                registration.installing.addEventListener('statechange', () => {
-                    if (registration.active) {
-                        registration.active.postMessage({ type: 'PRELOAD_DRINKS' });
-                    }
-                });
-            }
-            
-            // Check for updates
-            registration.addEventListener('updatefound', () => {
-                console.log('Service Worker update found');
-            });
-        } catch (error) {
-            console.error('Service Worker registration error:', error);
-        }
-    } else {
-        console.warn('Service Worker is not supported in this browser');
-    }
-
-    // Załaduj ulubione z localStorage
-    loadFavorites();
-
-    // Załaduj drinki
-    await loadDrinks();
-
-    // Nasłuchuj zdarzeń online/offline
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    updateOnlineStatus();
-
-    // Nasłuchuj zdarzeń nawigacji
-    setupNavigation();
-
-    // Nasłuchuj wyszukiwania i filtrów
-    setupSearchAndFilters();
-
-    // Inicjalizuj natywne funkcje
-    initializeNativeFeatures();
-
-    // Sprawdź czy użytkownik już udzielił zgody na powiadomienia
-    if (Notification.permission === 'default') {
-        setTimeout(() => {
-            showNotificationPrompt();
-        }, 3000);
-    }
-}
-
-// Załaduj drinki z API lub cache
-async function loadDrinks() {
-    const loadingEl = document.getElementById('loading');
-    const drinksListEl = document.getElementById('drinks-list');
-    const emptyStateEl = document.getElementById('empty-state');
-
-    loadingEl.classList.remove('hidden');
-    drinksListEl.innerHTML = '';
-    emptyStateEl.classList.add('hidden');
-
-    try {
-        // Lista popularnych drinków do wyszukiwania (rozszerzona lista)
-        const popularDrinks = [
-            // Cocktails
-            'margarita', 'mojito', 'cosmopolitan', 'old fashioned', 
-            'negroni', 'daiquiri', 'martini', 'whiskey sour',
-            'manhattan', 'bloody mary', 'pina colada', 'caipirinha',
-            'moscow mule', 'gin tonic', 'whiskey', 'vodka', 'rum',
-            'bourbon', 'scotch', 'brandy', 'cognac', 'champagne',
-            'wine', 'beer', 'cider', 'sangria', 'mimosa',
-            'bellini', 'mimosa', 'screwdriver', 'sex on the beach',
-            'long island iced tea', 'mai tai', 'hurricane', 'zombie',
-            // Shots
-            'kamikaze', 'b52', 'lemon drop', 'jagerbomb', 'jager bomb',
-            'tequila', 'fireball', 'irish car bomb', 'buttery nipple',
-            'red headed slut', 'sake bomb', 'screwdriver', 'sex on the beach',
-            'white russian', 'black russian', 'irish coffee', 'espresso martini'
-        ];
-
-        let allDrinks = [];
-        let drinksFromDB = [];
-
-        // Najpierw spróbuj załadować z IndexedDB
-        try {
-            drinksFromDB = await loadDrinksFromDB();
-            if (drinksFromDB && drinksFromDB.length > 0) {
-                console.log(`Завантажено ${drinksFromDB.length} напоїв з IndexedDB`);
-                allDrinks = drinksFromDB;
-            }
-        } catch (error) {
-            console.error('Помилка завантаження з IndexedDB:', error);
-        }
-
-        // Jeśli jesteśmy online, zaktualizuj dane z API
-        if (appState.isOnline) {
-            const newDrinks = [];
-            
-            for (const drinkName of popularDrinks) {
-                try {
-                    const response = await fetch(`${DRINKS_API}${drinkName}`);
-                    const data = await response.json();
-                    if (data.drinks) {
-                        newDrinks.push(...data.drinks);
-                    }
-                } catch (error) {
-                    console.error(`Помилка завантаження ${drinkName}:`, error);
-                }
-            }
-
-            // Połącz nowe drinki z istniejącymi
-            const existingIds = new Set(allDrinks.map(d => d.idDrink));
-            const uniqueNewDrinks = newDrinks.filter(d => !existingIds.has(d.idDrink));
-            allDrinks = allDrinks.concat(uniqueNewDrinks);
-
-            // Zapisz nowe drinki do IndexedDB
-            if (uniqueNewDrinks.length > 0) {
-                try {
-                    await saveDrinksToDB(uniqueNewDrinks);
-                } catch (error) {
-                    console.error('Помилка збереження в IndexedDB:', error);
-                }
-            }
-        }
-
-        // Usuń duplikaty
-        const uniqueDrinks = [];
-        const seenIds = new Set();
-        for (const drink of allDrinks) {
-            if (!seenIds.has(drink.idDrink)) {
-                seenIds.add(drink.idDrink);
-                uniqueDrinks.push(drink);
-            }
-        }
-
-        // Jeśli nie ma drinków, użyj przykładowych danych (dla trybu offline)
-        if (uniqueDrinks.length === 0) {
-            uniqueDrinks.push(...getSampleDrinks());
-            // Zapisz przykłady do IndexedDB
-            try {
-                await saveDrinksToDB(getSampleDrinks());
-            } catch (error) {
-                console.error('Помилка збереження прикладів:', error);
-            }
-        }
-
-        appState.drinks = uniqueDrinks;
-        appState.filteredDrinks = uniqueDrinks;
-        renderDrinks();
-    } catch (error) {
-        console.error('Error loading drinks:', error);
-        // Użyj przykładowych danych w przypadku błędu
-        appState.drinks = getSampleDrinks();
-        appState.filteredDrinks = appState.drinks;
-        renderDrinks();
-    } finally {
-        loadingEl.classList.add('hidden');
-    }
-}
-
-// Przykładowe dane drinków (dla trybu offline)
+// Прикладні дані напоїв для офлайн режиму
 function getSampleDrinks() {
     return [
         {
@@ -395,155 +143,106 @@ function getSampleDrinks() {
     ];
 }
 
-// Renderuj listę drinków
-function renderDrinks(drinks = appState.filteredDrinks) {
+// Завантаження напоїв з API або бази даних
+async function loadDrinks() {
+    const appState = getState();
+    const loadingEl = document.getElementById('loading');
     const drinksListEl = document.getElementById('drinks-list');
     const emptyStateEl = document.getElementById('empty-state');
 
-    if (drinks.length === 0) {
-        drinksListEl.innerHTML = '';
-        emptyStateEl.classList.remove('hidden');
-        return;
-    }
-
+    loadingEl.classList.remove('hidden');
+    drinksListEl.innerHTML = '';
     emptyStateEl.classList.add('hidden');
-    drinksListEl.innerHTML = drinks.map(drink => createDrinkCard(drink)).join('');
-    
-    // Dodaj event listenery do kart
-    drinksListEl.querySelectorAll('.drink-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const drinkId = card.dataset.drinkId;
-            showDrinkDetail(drinkId);
-        });
-    });
 
-    // Dodaj event listenery do przycisków ulubionych
-    drinksListEl.querySelectorAll('.favorite-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const drinkId = btn.dataset.drinkId;
-            toggleFavorite(drinkId);
-        });
-    });
-}
+    try {
+        const popularDrinks = [
+            'margarita', 'mojito', 'cosmopolitan', 'old fashioned', 
+            'negroni', 'daiquiri', 'martini', 'whiskey sour',
+            'manhattan', 'bloody mary', 'pina colada', 'caipirinha',
+            'moscow mule', 'gin tonic', 'whiskey', 'vodka', 'rum',
+            'bourbon', 'scotch', 'brandy', 'cognac', 'champagne',
+            'wine', 'beer', 'cider', 'sangria', 'mimosa',
+            'bellini', 'screwdriver', 'sex on the beach',
+            'long island iced tea', 'mai tai', 'hurricane', 'zombie',
+            'kamikaze', 'b52', 'lemon drop', 'jagerbomb', 'jager bomb',
+            'tequila', 'fireball', 'irish car bomb', 'buttery nipple',
+            'red headed slut', 'sake bomb', 'white russian', 'black russian', 
+            'irish coffee', 'espresso martini'
+        ];
 
-// Utwórz kartę drinka
-function createDrinkCard(drink) {
-    const isFavorite = appState.favorites.includes(drink.idDrink);
-    const emoji = getDrinkEmoji(drink.strCategory);
-    
-    return `
-        <div class="drink-card" data-drink-id="${drink.idDrink}">
-            <div class="drink-image">
-                ${drink.strDrinkThumb ? 
-                    `<img src="${drink.strDrinkThumb}" alt="${drink.strDrink}" onerror="this.parentElement.innerHTML='${emoji}'">` : 
-                    emoji
-                }
-                <button class="favorite-btn ${isFavorite ? 'active' : ''}" 
-                        data-drink-id="${drink.idDrink}" 
-                        aria-label="Add to favorites">
-                    ${isFavorite ? '⭐' : '☆'}
-                </button>
-            </div>
-            <div class="drink-content">
-                <h3 class="drink-name">${drink.strDrink}</h3>
-            </div>
-        </div>
-    `;
-}
+        let allDrinks = [];
+        let drinksFromDB = [];
 
-// Pobierz emoji dla kategorii drinka
-function getDrinkEmoji(category) {
-    const emojiMap = {
-        'Cocktail': '🍹',
-        'Shot': '🥃',
-        'Ordinary Drink': '🍸',
-        'Punch / Party Drink': '🍻',
-        'Beer': '🍺',
-        'Soft Drink': '🥤'
-    };
-    return emojiMap[category] || '🍹';
-}
-
-// Pokaż szczegóły drinka
-function showDrinkDetail(drinkId) {
-    const drink = appState.drinks.find(d => d.idDrink === drinkId);
-    if (!drink) return;
-
-    appState.currentDrink = drink;
-    const detailView = document.getElementById('detail-view');
-    const drinkDetailEl = document.getElementById('drink-detail');
-
-    // Pobierz składniki
-    const ingredients = [];
-    for (let i = 1; i <= 15; i++) {
-        const ingredient = drink[`strIngredient${i}`];
-        const measure = drink[`strMeasure${i}`];
-        if (ingredient) {
-            ingredients.push({ ingredient, measure: measure || '' });
+        // Завантаження з бази даних
+        try {
+            drinksFromDB = await loadDrinksFromDB(appState.db);
+            if (drinksFromDB && drinksFromDB.length > 0) {
+                console.log(`Завантажено ${drinksFromDB.length} напоїв з IndexedDB`);
+                allDrinks = drinksFromDB;
+            }
+        } catch (error) {
+            console.error('Помилка завантаження з IndexedDB:', error);
         }
-    }
 
-    const isFavorite = appState.favorites.includes(drink.idDrink);
-    const emoji = getDrinkEmoji(drink.strCategory);
+        // Завантаження з API, якщо онлайн
+        if (appState.isOnline) {
+            try {
+                const newDrinks = await fetchDrinksList(popularDrinks);
+                
+                const existingIds = new Set(allDrinks.map(d => d.idDrink));
+                const uniqueNewDrinks = newDrinks.filter(d => !existingIds.has(d.idDrink));
+                allDrinks = allDrinks.concat(uniqueNewDrinks);
 
-    drinkDetailEl.innerHTML = `
-        <div class="detail-header">
-            <div class="detail-image">
-                ${drink.strDrinkThumb ? 
-                    `<img src="${drink.strDrinkThumb}" alt="${drink.strDrink}" class="detail-image" onerror="this.parentElement.innerHTML='${emoji}'">` : 
-                    emoji
+                if (uniqueNewDrinks.length > 0) {
+                    try {
+                        await saveDrinksToDB(appState.db, uniqueNewDrinks);
+                    } catch (error) {
+                        console.error('Помилка збереження в IndexedDB:', error);
+                    }
                 }
-            </div>
-            <h2 class="detail-name">${drink.strDrink}</h2>
-            <p class="detail-category">${drink.strCategory || 'Cocktail'}</p>
-        </div>
+            } catch (error) {
+                console.error('Помилка завантаження з API:', error);
+            }
+        }
 
-        <div class="detail-section">
-            <h3>Ingredients</h3>
-            <ul class="ingredients-list">
-                ${ingredients.map(ing => `
-                    <li>${ing.measure ? `<strong>${ing.measure}</strong> ` : ''}${ing.ingredient}</li>
-                `).join('')}
-            </ul>
-        </div>
+        // Видалення дублікатів
+        const uniqueDrinks = [];
+        const seenIds = new Set();
+        for (const drink of allDrinks) {
+            if (!seenIds.has(drink.idDrink)) {
+                seenIds.add(drink.idDrink);
+                uniqueDrinks.push(drink);
+            }
+        }
 
-        <div class="detail-section">
-            <h3>Instructions</h3>
-            <p class="instructions">${drink.strInstructions || 'No instructions available'}</p>
-        </div>
+        // Якщо немає напоїв, використовуємо приклади
+        if (uniqueDrinks.length === 0) {
+            const sampleDrinks = getSampleDrinks();
+            uniqueDrinks.push(...sampleDrinks);
+            try {
+                await saveDrinksToDB(appState.db, sampleDrinks);
+            } catch (error) {
+                console.error('Помилка збереження прикладів:', error);
+            }
+        }
 
-        <div class="detail-actions">
-            <button class="btn-primary favorite-detail-btn ${isFavorite ? 'active' : ''}" 
-                    data-drink-id="${drink.idDrink}">
-                ${isFavorite ? '⭐ Remove from favorites' : '☆ Add to favorites'}
-            </button>
-        </div>
-    `;
-
-    // Event listener dla przycisku ulubionych w szczegółach
-    const favoriteBtn = drinkDetailEl.querySelector('.favorite-detail-btn');
-    if (favoriteBtn) {
-        favoriteBtn.addEventListener('click', () => {
-            toggleFavorite(drink.idDrink);
-            showDrinkDetail(drink.idDrink); // Refresh view
-        });
+        setDrinks(uniqueDrinks);
+        renderDrinks(uniqueDrinks);
+    } catch (error) {
+        console.error('Помилка завантаження напоїв:', error);
+        const sampleDrinks = getSampleDrinks();
+        setDrinks(sampleDrinks);
+        setFilteredDrinks(sampleDrinks);
+        renderDrinks(sampleDrinks);
+    } finally {
+        loadingEl.classList.add('hidden');
     }
-
-    switchView('detail-view');
 }
 
-// Przełącz widok
-function switchView(viewId) {
-    document.querySelectorAll('.view').forEach(view => {
-        view.classList.remove('active');
-    });
-    document.getElementById(viewId).classList.add('active');
-    appState.currentView = viewId;
-}
-
-// Konfiguracja nawigacji
+// Налаштування навігації
 function setupNavigation() {
+    const appState = getState();
+    
     document.getElementById('favorites-btn').addEventListener('click', () => {
         showFavorites();
     });
@@ -561,74 +260,14 @@ function setupNavigation() {
     });
 }
 
-// Pokaż ulubione
-function showFavorites() {
-    const favoritesView = document.getElementById('favorites-view');
-    const favoritesListEl = document.getElementById('favorites-list');
-    const favoritesEmptyEl = document.getElementById('favorites-empty');
-
-    if (appState.favorites.length === 0) {
-        favoritesListEl.innerHTML = '';
-        favoritesEmptyEl.classList.remove('hidden');
-    } else {
-        favoritesEmptyEl.classList.add('hidden');
-        const favoriteDrinks = appState.drinks.filter(d => 
-            appState.favorites.includes(d.idDrink)
-        );
-        renderDrinks(favoriteDrinks);
-        favoritesListEl.innerHTML = favoriteDrinks.map(drink => createDrinkCard(drink)).join('');
-        
-        // Dodaj event listenery
-        favoritesListEl.querySelectorAll('.drink-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const drinkId = card.dataset.drinkId;
-                showDrinkDetail(drinkId);
-            });
-        });
-
-        favoritesListEl.querySelectorAll('.favorite-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const drinkId = btn.dataset.drinkId;
-                toggleFavorite(drinkId);
-                showFavorites(); // Refresh view
-            });
-        });
-    }
-
-    switchView('favorites-view');
-}
-
-// Przełącz ulubione
-function toggleFavorite(drinkId) {
-    const index = appState.favorites.indexOf(drinkId);
-    if (index > -1) {
-        appState.favorites.splice(index, 1);
-    } else {
-        appState.favorites.push(drinkId);
-    }
-    saveFavorites();
-    renderDrinks();
-}
-
-// Zapisz ulubione do localStorage
-function saveFavorites() {
-    localStorage.setItem('drinkMasterFavorites', JSON.stringify(appState.favorites));
-}
-
-// Załaduj ulubione z localStorage
-function loadFavorites() {
-    const saved = localStorage.getItem('drinkMasterFavorites');
-    if (saved) {
-        appState.favorites = JSON.parse(saved);
-    }
-}
-
-// Konfiguracja wyszukiwania i filtrów
-function setupSearchAndFilters() {
+// Налаштування пошуку та фільтрів
+async function setupSearchAndFilters() {
+    const { setSearchTerm, setCategoryFilter } = await import('./state.js');
+    const { filterDrinks } = await import('./filters.js');
+    
     const searchInput = document.getElementById('search-input');
     searchInput.addEventListener('input', (e) => {
-        appState.searchTerm = e.target.value.toLowerCase();
+        setSearchTerm(e.target.value);
         filterDrinks();
     });
 
@@ -636,175 +275,26 @@ function setupSearchAndFilters() {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            appState.categoryFilter = btn.dataset.category;
+            setCategoryFilter(btn.dataset.category);
             filterDrinks();
         });
     });
 }
 
-// Filtruj drinki
-function filterDrinks() {
-    let filtered = appState.drinks;
-
-    // Filtruj po kategorii
-    if (appState.categoryFilter !== 'all') {
-        const categoryMap = {
-            'cocktail': 'Cocktail',
-            'shot': 'Shot',
-            'mocktail': 'Non alcoholic'
-        };
-        const category = categoryMap[appState.categoryFilter];
-        if (category) {
-            filtered = filtered.filter(drink => 
-                drink.strCategory === category || 
-                (appState.categoryFilter === 'mocktail' && drink.strAlcoholic === 'Non alcoholic')
-            );
-        }
-    }
-
-    // Filtruj po wyszukiwaniu
-    if (appState.searchTerm) {
-        filtered = filtered.filter(drink =>
-            drink.strDrink.toLowerCase().includes(appState.searchTerm) ||
-            (drink.strInstructions && drink.strInstructions.toLowerCase().includes(appState.searchTerm))
-        );
-    }
-
-    appState.filteredDrinks = filtered;
-    renderDrinks();
-}
-
-// NATYWNE FUNKCJE URZĄDZENIA
-
-// 1. Web Share API - udostępnij drink
-function shareDrink() {
-    const drink = appState.currentDrink;
-    if (!drink) return;
-
-    if (navigator.share) {
-        const shareData = {
-            title: `Check out this drink: ${drink.strDrink}`,
-            text: `Ingredients: ${getIngredientsText(drink)}`,
-            url: window.location.href
-        };
-
-        navigator.share(shareData)
-            .then(() => console.log('Shared successfully'))
-            .catch((error) => {
-                console.error('Share error:', error);
-                // Fallback - copy to clipboard
-                copyToClipboard(`${drink.strDrink}\n${getIngredientsText(drink)}`);
-            });
-    } else {
-        // Fallback for browsers without Web Share API
-        copyToClipboard(`${drink.strDrink}\n${getIngredientsText(drink)}`);
-        alert('Copied to clipboard!');
-    }
-}
-
-// Pobierz tekst składników
-function getIngredientsText(drink) {
-    const ingredients = [];
-    for (let i = 1; i <= 15; i++) {
-        const ingredient = drink[`strIngredient${i}`];
-        const measure = drink[`strMeasure${i}`];
-        if (ingredient) {
-            ingredients.push(`${measure || ''} ${ingredient}`.trim());
-        }
-    }
-    return ingredients.join(', ');
-}
-
-// Skopiuj do schowka
-async function copyToClipboard(text) {
-    try {
-        await navigator.clipboard.writeText(text);
-    } catch (error) {
-        console.error('Copy error:', error);
-    }
-}
-
-// 2. Powiadomienia Push
-function initializeNotifications() {
-    const enableBtn = document.getElementById('enable-notifications-btn');
-    const dismissBtn = document.getElementById('dismiss-notifications-btn');
-
-    if (enableBtn) {
-        enableBtn.addEventListener('click', async () => {
-            if ('Notification' in window) {
-                const permission = await Notification.requestPermission();
-                if (permission === 'granted') {
-                    showNotification('Notifications enabled!', 'You will receive reminders about new drinks.');
-                    scheduleNotification();
-                    hideNotificationPrompt();
-                }
-            }
-        });
-    }
-
-    if (dismissBtn) {
-        dismissBtn.addEventListener('click', () => {
-            hideNotificationPrompt();
-            localStorage.setItem('notificationPromptDismissed', 'true');
-        });
-    }
-}
-
-// Pokaż powiadomienie
-function showNotification(title, body) {
-    if (Notification.permission === 'granted') {
-        new Notification(title, {
-            body: body,
-            icon: '/icons/icon-192x192.png',
-            badge: '/icons/icon-192x192.png'
-        });
-    }
-}
-
-// Zaplanuj powiadomienie (przykładowe - codziennie o 18:00)
-function scheduleNotification() {
-    // W rzeczywistej aplikacji można użyć Background Sync API
-    // Tutaj pokazujemy przykład z setTimeout
-    setTimeout(() => {
-        if (Notification.permission === 'granted') {
-            showNotification('🍹 Time for a drink!', 'Check out new drink recipes in the Drink Master app!');
-        }
-    }, 60000); // Po 1 minucie (dla demonstracji)
-}
-
-// Pokaż prompt powiadomień
-function showNotificationPrompt() {
-    const prompt = document.getElementById('notification-prompt');
-    const dismissed = localStorage.getItem('notificationPromptDismissed');
-    if (!dismissed && Notification.permission === 'default') {
-        prompt.classList.remove('hidden');
-    }
-}
-
-// Ukryj prompt powiadomień
-function hideNotificationPrompt() {
-    const prompt = document.getElementById('notification-prompt');
-    prompt.classList.add('hidden');
-}
-
-// Inicjalizuj wszystkie natywne funkcje
-function initializeNativeFeatures() {
-    initializeNotifications();
-}
-
-// Obsługa statusu online/offline
+// Обробка онлайн/офлайн статусу
 function handleOnline() {
-    appState.isOnline = true;
+    setOnlineStatus(true);
     updateOnlineStatus();
-    loadDrinks(); // Refresh drinks when we come back online
+    loadDrinks(); 
 }
 
 function handleOffline() {
-    appState.isOnline = false;
+    setOnlineStatus(false);
     updateOnlineStatus();
 }
 
 function updateOnlineStatus() {
+    const appState = getState();
     const indicator = document.getElementById('offline-indicator');
     if (appState.isOnline) {
         indicator.classList.add('hidden');
@@ -812,3 +302,56 @@ function updateOnlineStatus() {
         indicator.classList.remove('hidden');
     }
 }
+
+// Ініціалізація додатку
+async function initializeApp() {
+    try {
+        // Ініціалізація бази даних
+        const db = await initDB();
+        setDB(db);
+    } catch (error) {
+        console.error('Помилка ініціалізації IndexedDB:', error);
+    }
+    
+    // Реєстрація Service Worker
+    if ('serviceWorker' in navigator) {
+        try {
+            const registration = await navigator.serviceWorker.register('/sw.js', {
+                scope: '/'
+            });
+            console.log('Service Worker зареєстровано:', registration);
+        } catch (error) {
+            console.error('Помилка реєстрації Service Worker:', error);
+        }
+    } else {
+        console.warn('Service Worker не підтримується в цьому браузері');
+    }
+
+    // Завантаження улюблених
+    loadFavorites();
+
+    // Завантаження напоїв
+    await loadDrinks();
+
+    // Налаштування обробників подій
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    updateOnlineStatus();
+
+    // Налаштування UI
+    setupNavigation();
+    await setupSearchAndFilters();
+    initializeNativeFeatures();
+
+    // Показ запроту на сповіщення
+    if (Notification.permission === 'default') {
+        setTimeout(() => {
+            showNotificationPrompt();
+        }, 3000);
+    }
+}
+
+// Запуск додатку
+document.addEventListener('DOMContentLoaded', () => {
+    initializeApp();
+});

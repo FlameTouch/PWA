@@ -7,11 +7,9 @@
     <meta name="theme-color" content="#4a5568">
     <title>Drink Master - Choose Drinks</title>
     
-    <!-- PWA Meta Tags -->
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" href="icons/icon-192x192.png">
     
-    <!-- Apple iOS Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Drink Master">
@@ -22,7 +20,6 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- View 1: Drinks list (main) -->
     <div id="drinks-view" class="view active">
         <header class="app-header">
             <h1>Drink Master</h1>
@@ -49,7 +46,6 @@
         </div>
 
         <div id="drinks-list" class="drinks-list">
-            <!-- Drinki będą tutaj dynamicznie dodawane -->
         </div>
 
         <div id="loading" class="loading hidden">
@@ -62,7 +58,6 @@
         </div>
     </div>
 
-    <!-- View 2: Drink details -->
     <div id="detail-view" class="view">
         <header class="app-header">
             <button id="back-btn" class="back-btn" aria-label="Back">←</button>
@@ -71,11 +66,10 @@
         </header>
 
         <div id="drink-detail" class="drink-detail">
-            <!-- Szczegóły drinka będą tutaj dynamicznie dodawane -->
         </div>
     </div>
 
-    <!-- View 3: Favorite drinks -->
+
     <div id="favorites-view" class="view">
         <header class="app-header">
             <button id="back-from-favorites-btn" class="back-btn" aria-label="Back">←</button>
@@ -83,7 +77,6 @@
         </header>
 
         <div id="favorites-list" class="drinks-list">
-            <!-- Ulubione drinki będą tutaj dynamicznie dodawane -->
         </div>
 
         <div id="favorites-empty" class="empty-state">
@@ -92,13 +85,12 @@
         </div>
     </div>
 
-    <!-- Notification permission prompt -->
     <div id="notification-prompt" class="notification-prompt hidden">
         <p>Enable notifications to receive reminders about new drinks!</p>
         <button id="enable-notifications-btn" class="btn-primary">Enable notifications</button>
         <button id="dismiss-notifications-btn" class="btn-secondary">Not now</button>
     </div>
 
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>
