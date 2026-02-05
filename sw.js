@@ -66,69 +66,25 @@ self.addEventListener('activate', (event) => {
 
 // Спеціальна обробка API запитів
 // CORS блокує запити, тому використовуємо кеш як основний джерело даних
+// Не намагаємося оновлювати кеш, оскільки CORS завжди блокує запити
 async function handleAPIRequest(request) {
-    // Спочатку перевірити кеш - це наш основний джерело даних
+    // Перевірити кеш - це наш основний джерело даних
     const cachedResponse = await caches.match(request, { cacheName: API_CACHE });
     if (cachedResponse) {
         console.log('Service Worker: Знайдено в кеші:', request.url);
-        // Спробувати оновити кеш у фоновому режимі (без блокування відповіді)
-        updateCacheInBackground(request).catch(() => {});
+        // Не намагаємося оновлювати кеш, оскільки CORS завжди блокує
         return cachedResponse;
     }
     
-    // Якщо немає в кеші, спробувати отримати з мережі
-    // Навіть якщо CORS блокує, спробуємо (можливо, сервер дозволить)
-    try {
-        const networkResponse = await fetch(request.url, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json'
-            }
-        });
-        
-        // Якщо успішно, зберегти в кеш і повернути
-        if (networkResponse.ok) {
-            const cache = await caches.open(API_CACHE);
-            const responseClone = networkResponse.clone();
-            await cache.put(request, responseClone);
-            console.log('Service Worker: Успішно завантажено з мережі:', request.url);
-            return networkResponse;
-        }
-    } catch (error) {
-        // CORS або інша помилка мережі - це очікувано
-        // Просто повертаємо порожню відповідь, додаток використає прикладні дані
-        console.log('Service Worker: CORS блокує запит, використовую порожню відповідь:', request.url);
-    }
-    
-    // Якщо все не вдалося, повернути порожню відповідь
+    // Якщо немає в кеші, повернути порожню відповідь
     // Додаток використає прикладні дані з getSampleDrinks()
+    // Не намагаємося робити мережевий запит, оскільки CORS завжди блокує
     return new Response(JSON.stringify({ drinks: [] }), {
         headers: { 'Content-Type': 'application/json' }
     });
 }
 
-// Оновлення кешу у фоновому режимі
-// Спроба оновити кеш, але не блокуємо відповідь, якщо не вдалося
-async function updateCacheInBackground(request) {
-    try {
-        const networkResponse = await fetch(request.url, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json'
-            }
-        });
-        
-        if (networkResponse.ok) {
-            const cache = await caches.open(API_CACHE);
-            const responseClone = networkResponse.clone();
-            await cache.put(request, responseClone);
-            console.log('Service Worker: Кеш оновлено в фоновому режимі:', request.url);
-        }
-    } catch (error) {
-        // Ігнорувати помилки оновлення кешу (CORS блокує)
-        // Це нормально, використовуємо кешовані дані
-    }
-}
+// Функція видалена - не використовується, оскільки CORS завжди блокує API запити
 
 // Стратегія Network First з fallback до Cache
 // Спочатку намагається отримати дані з мережі, якщо не вдається - використовує кеш
