@@ -1,6 +1,11 @@
 // Dane drinków (będą buforowane w Service Worker)
 const DRINKS_API = 'https://www.thecocktaildb.com/api/json/v1/1/search.php?s=';
 
+// IndexedDB do przechowywania wszystkich drinków
+const DB_NAME = 'DrinkMasterDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'drinks';
+
 // Stan aplikacji
 const appState = {
     drinks: [],
@@ -10,7 +15,8 @@ const appState = {
     currentDrink: null,
     searchTerm: '',
     categoryFilter: 'all',
-    isOnline: navigator.onLine
+    isOnline: navigator.onLine,
+    db: null
 };
 
 // Inicjalizacja aplikacji
@@ -18,8 +24,93 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeApp();
 });
 
+// Inicjalizacja IndexedDB
+async function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onerror = () => {
+            console.error('IndexedDB помилка:', request.error);
+            reject(request.error);
+        };
+        
+        request.onsuccess = () => {
+            appState.db = request.result;
+            console.log('IndexedDB відкрито успішно');
+            resolve(appState.db);
+        };
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'idDrink' });
+                objectStore.createIndex('strDrink', 'strDrink', { unique: false });
+                objectStore.createIndex('strCategory', 'strCategory', { unique: false });
+                console.log('IndexedDB схема створена');
+            }
+        };
+    });
+}
+
+// Zapisz drinki do IndexedDB
+async function saveDrinksToDB(drinks) {
+    if (!appState.db) {
+        await initDB();
+    }
+    
+    return new Promise((resolve, reject) => {
+        const transaction = appState.db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        drinks.forEach(drink => {
+            store.put(drink);
+        });
+        
+        transaction.oncomplete = () => {
+            console.log(`Збережено ${drinks.length} напоїв в IndexedDB`);
+            resolve();
+        };
+        
+        transaction.onerror = () => {
+            console.error('Помилка збереження в IndexedDB:', transaction.error);
+            reject(transaction.error);
+        };
+    });
+}
+
+// Załaduj wszystkie drinki z IndexedDB
+async function loadDrinksFromDB() {
+    if (!appState.db) {
+        await initDB();
+    }
+    
+    return new Promise((resolve, reject) => {
+        const transaction = appState.db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+        
+        request.onsuccess = () => {
+            const drinks = request.result;
+            console.log(`Завантажено ${drinks.length} напоїв з IndexedDB`);
+            resolve(drinks);
+        };
+        
+        request.onerror = () => {
+            console.error('Помилка завантаження з IndexedDB:', request.error);
+            reject(request.error);
+        };
+    });
+}
+
 // Initialize application
 async function initializeApp() {
+    // Inicjalizacja IndexedDB
+    try {
+        await initDB();
+    } catch (error) {
+        console.error('Помилка ініціалізації IndexedDB:', error);
+    }
+    
     // Check if Service Worker is supported
     if ('serviceWorker' in navigator) {
         try {
@@ -27,6 +118,17 @@ async function initializeApp() {
                 scope: '/'
             });
             console.log('Service Worker registered:', registration);
+            
+            // Wyślij komendę do wcześniejszego ładowania wszystkich drinków
+            if (registration.active) {
+                registration.active.postMessage({ type: 'PRELOAD_DRINKS' });
+            } else if (registration.installing) {
+                registration.installing.addEventListener('statechange', () => {
+                    if (registration.active) {
+                        registration.active.postMessage({ type: 'PRELOAD_DRINKS' });
+                    }
+                });
+            }
             
             // Check for updates
             registration.addEventListener('updatefound', () => {
@@ -78,31 +180,65 @@ async function loadDrinks() {
     emptyStateEl.classList.add('hidden');
 
     try {
-        // List of popular drinks to search
+        // Lista popularnych drinków do wyszukiwania (rozszerzona lista)
         const popularDrinks = [
             // Cocktails
             'margarita', 'mojito', 'cosmopolitan', 'old fashioned', 
             'negroni', 'daiquiri', 'martini', 'whiskey sour',
             'manhattan', 'bloody mary', 'pina colada', 'caipirinha',
+            'moscow mule', 'gin tonic', 'whiskey', 'vodka', 'rum',
+            'bourbon', 'scotch', 'brandy', 'cognac', 'champagne',
+            'wine', 'beer', 'cider', 'sangria', 'mimosa',
+            'bellini', 'mimosa', 'screwdriver', 'sex on the beach',
+            'long island iced tea', 'mai tai', 'hurricane', 'zombie',
             // Shots
             'kamikaze', 'b52', 'lemon drop', 'jagerbomb', 'jager bomb',
             'tequila', 'fireball', 'irish car bomb', 'buttery nipple',
-            'red headed slut', 'sake bomb', 'screwdriver', 'sex on the beach'
+            'red headed slut', 'sake bomb', 'screwdriver', 'sex on the beach',
+            'white russian', 'black russian', 'irish coffee', 'espresso martini'
         ];
 
         let allDrinks = [];
+        let drinksFromDB = [];
 
-        // Jeśli jesteśmy online, pobierz z API
+        // Najpierw spróbuj załadować z IndexedDB
+        try {
+            drinksFromDB = await loadDrinksFromDB();
+            if (drinksFromDB && drinksFromDB.length > 0) {
+                console.log(`Завантажено ${drinksFromDB.length} напоїв з IndexedDB`);
+                allDrinks = drinksFromDB;
+            }
+        } catch (error) {
+            console.error('Помилка завантаження з IndexedDB:', error);
+        }
+
+        // Jeśli jesteśmy online, zaktualizuj dane z API
         if (appState.isOnline) {
+            const newDrinks = [];
+            
             for (const drinkName of popularDrinks) {
                 try {
                     const response = await fetch(`${DRINKS_API}${drinkName}`);
                     const data = await response.json();
                     if (data.drinks) {
-                        allDrinks = allDrinks.concat(data.drinks);
+                        newDrinks.push(...data.drinks);
                     }
                 } catch (error) {
-                    console.error(`Error fetching ${drinkName}:`, error);
+                    console.error(`Помилка завантаження ${drinkName}:`, error);
+                }
+            }
+
+            // Połącz nowe drinki z istniejącymi
+            const existingIds = new Set(allDrinks.map(d => d.idDrink));
+            const uniqueNewDrinks = newDrinks.filter(d => !existingIds.has(d.idDrink));
+            allDrinks = allDrinks.concat(uniqueNewDrinks);
+
+            // Zapisz nowe drinki do IndexedDB
+            if (uniqueNewDrinks.length > 0) {
+                try {
+                    await saveDrinksToDB(uniqueNewDrinks);
+                } catch (error) {
+                    console.error('Помилка збереження в IndexedDB:', error);
                 }
             }
         }
@@ -120,6 +256,12 @@ async function loadDrinks() {
         // Jeśli nie ma drinków, użyj przykładowych danych (dla trybu offline)
         if (uniqueDrinks.length === 0) {
             uniqueDrinks.push(...getSampleDrinks());
+            // Zapisz przykłady do IndexedDB
+            try {
+                await saveDrinksToDB(getSampleDrinks());
+            } catch (error) {
+                console.error('Помилка збереження прикладів:', error);
+            }
         }
 
         appState.drinks = uniqueDrinks;

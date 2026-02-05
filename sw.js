@@ -1,8 +1,9 @@
 // Service Worker dla aplikacji Drink Master
 // Implementuje strategię buforowania dla trybu offline
 
-const CACHE_NAME = 'drink-master-v3';
-const RUNTIME_CACHE = 'drink-master-runtime-v3';
+const CACHE_NAME = 'drink-master-v4';
+const RUNTIME_CACHE = 'drink-master-runtime-v4';
+const API_CACHE = 'drink-master-api-v4';
 
 // Zasoby do buforowania przy instalacji
 const STATIC_CACHE_URLS = [
@@ -63,6 +64,44 @@ self.addEventListener('activate', (event) => {
     return self.clients.claim();
 });
 
+// Funkcja dla synchronizacji wszystkich drinków z API
+async function preloadAllDrinks() {
+    console.log('Service Worker: Початок попереднього завантаження напоїв');
+    
+    // Lista popularnych drinków do ładowania
+    const popularDrinks = [
+        'margarita', 'mojito', 'cosmopolitan', 'old fashioned', 
+        'negroni', 'daiquiri', 'martini', 'whiskey sour',
+        'manhattan', 'bloody mary', 'pina colada', 'caipirinha',
+        'kamikaze', 'b52', 'lemon drop', 'jagerbomb', 'jager bomb',
+        'tequila', 'fireball', 'irish car bomb', 'buttery nipple',
+        'red headed slut', 'sake bomb', 'screwdriver', 'sex on the beach',
+        'moscow mule', 'gin tonic', 'whiskey', 'vodka', 'rum',
+        'bourbon', 'scotch', 'brandy', 'cognac', 'champagne',
+        'wine', 'beer', 'cider', 'sangria', 'mimosa'
+    ];
+    
+    const API_BASE = 'https://www.thecocktaildb.com/api/json/v1/1/search.php?s=';
+    const cache = await caches.open(API_CACHE);
+    
+    // Załaduj wszystkie popularne drinki
+    const fetchPromises = popularDrinks.map(async (drinkName) => {
+        const url = `${API_BASE}${encodeURIComponent(drinkName)}`;
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                await cache.put(url, response.clone());
+                console.log(`Service Worker: Збережено в кеш: ${drinkName}`);
+            }
+        } catch (error) {
+            console.log(`Service Worker: Помилка завантаження ${drinkName}:`, error);
+        }
+    });
+    
+    await Promise.all(fetchPromises);
+    console.log('Service Worker: Завершено попереднє завантаження напоїв');
+}
+
 // Strategia buforowania: Network First z fallback do Cache
 // Używana dla żądań API (dynamiczne dane)
 async function networkFirst(request) {
@@ -72,22 +111,37 @@ async function networkFirst(request) {
         
         // Jeśli sukces, zbuforuj odpowiedź
         if (networkResponse.ok) {
-            const cache = await caches.open(RUNTIME_CACHE);
-            cache.put(request, networkResponse.clone());
+            const cache = await caches.open(API_CACHE);
+            // Klonuj odpowiedź, bo może być użyta tylko raz
+            const responseClone = networkResponse.clone();
+            // Zbuforuj odpowiedź
+            cache.put(request, responseClone).catch(err => {
+                console.log('Service Worker: Błąd podczas buforowania:', err);
+            });
         }
         
         return networkResponse;
     } catch (error) {
         // Jeśli sieć nie działa, użyj cache
         console.log('Service Worker: Sieć nie działa, używam cache:', request.url);
-        const cachedResponse = await caches.match(request);
+        
+        // Spróbuj znaleźć w API cache
+        const cachedResponse = await caches.match(request, { cacheName: API_CACHE });
         
         if (cachedResponse) {
+            console.log('Service Worker: Znaleziono w cache:', request.url);
             return cachedResponse;
+        }
+        
+        // Spróbuj znaleźć w runtime cache
+        const runtimeCached = await caches.match(request, { cacheName: RUNTIME_CACHE });
+        if (runtimeCached) {
+            return runtimeCached;
         }
         
         // Jeśli nie ma w cache, zwróć odpowiedź offline
         if (request.url.includes('thecocktaildb.com')) {
+            console.log('Service Worker: Brak cache, zwracam pustą odpowiedź');
             return new Response(JSON.stringify({ drinks: [] }), {
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -204,7 +258,7 @@ self.addEventListener('fetch', (event) => {
             return;
         }
         
-        // API requests - Network First
+        // API requests - Network First з повним кешуванням
         if (url.hostname.includes('thecocktaildb.com') || url.pathname.includes('/api/')) {
             event.respondWith(networkFirst(request));
         }
@@ -243,6 +297,11 @@ self.addEventListener('message', (event) => {
             })
         );
     }
+    
+    // Komenda do wcześniejszego ładowania wszystkich drinków
+    if (event.data && event.data.type === 'PRELOAD_DRINKS') {
+        event.waitUntil(preloadAllDrinks());
+    }
 });
 
 // Background Sync (dla przyszłych funkcji)
@@ -255,5 +314,5 @@ self.addEventListener('sync', (event) => {
 async function syncDrinks() {
     // Funkcja do synchronizacji drinków w tle
     console.log('Service Worker: Synchronizacja drinków w tle');
-    // Implementacja synchronizacji...
+    await preloadAllDrinks();
 }
