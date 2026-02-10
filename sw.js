@@ -11,6 +11,7 @@ const STATIC_CACHE_URLS = [
     '/index.html',
     '/styles.css',
     '/app.js',
+    '/drinks.json',
     '/database.js',
     '/api.js',
     '/state.js',
