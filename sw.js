@@ -1,5 +1,5 @@
 // Service Worker для PWA додатку Drink Master
-// Обробляє кешування та офлайн функціональність
+// Обробляє кешування та офлайн функціональність (без жодного CORS‑коду)
 
 const CACHE_NAME = 'drink-master-v5';
 const RUNTIME_CACHE = 'drink-master-runtime-v5';
@@ -11,6 +11,7 @@ const STATIC_CACHE_URLS = [
     '/index.html',
     '/styles.css',
     '/app.js',
+    '/drinks.json',          // локальне "API"
     '/database.js',
     '/api.js',
     '/state.js',
@@ -64,64 +65,45 @@ self.addEventListener('activate', (event) => {
     return self.clients.claim();
 });
 
-// Стратегія Network First з fallback до Cache
-// Спочатку намагається отримати дані з мережі, якщо не вдається - використовує кеш
+// Стратегія Network First з fallback до Cache (для динамічних запитів, якщо з'являться)
 async function networkFirst(request) {
     try {
-        // Спробувати отримати відповідь з мережі
         const networkResponse = await fetch(request);
-        
-        // Якщо відповідь успішна, зберегти в кеш для майбутнього використання
         if (networkResponse.ok) {
             const cache = await caches.open(API_CACHE);
-            const responseClone = networkResponse.clone();
-            cache.put(request, responseClone).catch(err => {
-                console.log('Service Worker: Error caching:', err);
-            });
+            await cache.put(request, networkResponse.clone());
         }
-        
         return networkResponse;
     } catch (error) {
-        // Мережа недоступна - шукати в кеші
         console.log('Service Worker: Network is not working, using cache:', request.url);
-
-        // Спочатку перевірити API кеш
         const cachedResponse = await caches.match(request, { cacheName: API_CACHE });
         if (cachedResponse) {
             console.log('Service Worker: Found in cache:', request.url);
             return cachedResponse;
         }
-
-        // Перевірити runtime кеш
         const runtimeCached = await caches.match(request, { cacheName: RUNTIME_CACHE });
         if (runtimeCached) {
             return runtimeCached;
         }
-        
         throw error;
     }
 }
 
-// Стратегія Cache First
-// Спочатку перевіряє кеш, якщо немає - завантажує з мережі
+// Стратегія Cache First (для статики і JSON, включно з drinks.json)
 async function cacheFirst(request) {
     const cachedResponse = await caches.match(request);
-    
     if (cachedResponse) {
         return cachedResponse;
     }
-    
+
     try {
         const networkResponse = await fetch(request);
-        
         if (networkResponse.ok) {
             const cache = await caches.open(CACHE_NAME);
-            cache.put(request, networkResponse.clone());
+            await cache.put(request, networkResponse.clone());
         }
-        
         return networkResponse;
     } catch (error) {
-        // Якщо це запит HTML і мережа недоступна, повернути index.html
         if (request.headers.get('accept') && request.headers.get('accept').includes('text/html')) {
             const indexCache = await caches.match('/index.html');
             if (indexCache) {
@@ -139,87 +121,59 @@ async function cacheFirst(request) {
     }
 }
 
-// Стратегія Stale While Revalidate
-// Повертає дані з кешу одразу, але оновлює кеш у фоновому режимі
+// Стратегія Stale While Revalidate (для зображень тощо)
 async function staleWhileRevalidate(request) {
     const cache = await caches.open(RUNTIME_CACHE);
     const cachedResponse = await cache.match(request);
 
-    // Оновити кеш у фоновому режимі
     const fetchPromise = fetch(request).then((networkResponse) => {
         if (networkResponse.ok) {
             cache.put(request, networkResponse.clone());
         }
         return networkResponse;
-    }).catch(() => {
-        // Ігнорувати помилки мережі
-    });
-    
-    // Повернути кешовану відповідь одразу, якщо вона є
+    }).catch(() => {});
+
     return cachedResponse || fetchPromise;
 }
 
-// Подія fetch - обробка всіх мережевих запитів
-// Це основна функція Service Worker, яка перехоплює всі HTTP запити
+// Основний fetch‑обробник
 self.addEventListener('fetch', (event) => {
     const { request } = event;
     const url = new URL(request.url);
-    
-    // Обробляти тільки GET запити та запити до нашого домену або API
+
     if (request.method !== 'GET') {
         return;
     }
-    
-    // Перевірити, чи це запит до нашого додатку або API
-    if (url.origin !== self.location.origin && !url.hostname.includes('thecocktaildb.com') && !url.hostname.includes('allorigins.win')) {
+
+    // Обробляємо тільки свій origin (локальні файли)
+    if (url.origin !== self.location.origin) {
         return;
     }
-    
-    // Обробка навігаційних запитів (запити HTML сторінок)
-    if (request.mode === 'navigate' || (request.method === 'GET' && request.headers.get('accept') && request.headers.get('accept').includes('text/html'))) {
+
+    // Навігація (HTML)
+    if (request.mode === 'navigate' || (request.headers.get('accept') || '').includes('text/html')) {
         event.respondWith(
             caches.match('/index.html').then((cachedResponse) => {
-                if (cachedResponse) {
-                    return cachedResponse;
-                }
+                if (cachedResponse) return cachedResponse;
                 return fetch(request).then((networkResponse) => {
                     if (networkResponse.ok) {
-                        const cache = caches.open(CACHE_NAME);
-                        cache.then(c => c.put('/index.html', networkResponse.clone()));
+                        caches.open(CACHE_NAME).then(c => c.put('/index.html', networkResponse.clone()));
                     }
                     return networkResponse;
-                }).catch(() => {
-                    return caches.match('/index.html').then((fallbackResponse) => {
-                        if (fallbackResponse) {
-                            return fallbackResponse;
-                        }
-                        return new Response('Offline - Check your internet connection', {
-                            status: 503,
-                            statusText: 'Service Unavailable',
-                            headers: { 'Content-Type': 'text/html' }
-                        });
-                    });
-                });
+                }).catch(() => caches.match('/index.html'));
             })
         );
         return;
     }
-    
-    // Обробка запитів до API напоїв (TheCocktailDB przez allorigins.win)
-    if (
-        url.hostname.includes('thecocktaildb.com') ||
-        url.hostname.includes('api.allorigins.win') ||
-        url.pathname.includes('/api/')
-    ) {
-        event.respondWith(networkFirst(request));
+
+    // Зображення
+    if (request.destination === 'image' || url.pathname.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
+        event.respondWith(staleWhileRevalidate(request));
         return;
     }
-    // Обробка зображень
-    else if (request.destination === 'image' || url.pathname.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
-        event.respondWith(staleWhileRevalidate(request));
-    }
-    // Обробка статичних ресурсів (HTML, CSS, JS, JSON)
-    else if (
+
+    // Статичні ресурси (HTML, CSS, JS, JSON – включно з drinks.json)
+    if (
         request.destination === 'document' ||
         request.destination === 'style' ||
         request.destination === 'script' ||
@@ -228,24 +182,23 @@ self.addEventListener('fetch', (event) => {
         url.pathname === ''
     ) {
         event.respondWith(cacheFirst(request));
+        return;
     }
-    // Для всіх інших запитів використовувати Network First
-    else {
-        event.respondWith(networkFirst(request));
-    }
+
+    // Інше – network first
+    event.respondWith(networkFirst(request));
 });
 
-// Обробка повідомлень від основного додатку
+// Обробка повідомлень
 self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     }
-    
+
     if (event.data && event.data.type === 'CACHE_URLS') {
         event.waitUntil(
-            caches.open(RUNTIME_CACHE).then((cache) => {
-                return cache.addAll(event.data.urls);
-            })
+            caches.open(RUNTIME_CACHE).then((cache) => cache.addAll(event.data.urls))
         );
     }
 });
+

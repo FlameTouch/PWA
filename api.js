@@ -1,57 +1,46 @@
 // API Module
-// Модуль для роботи з API напоїв
+// Модуль для роботи з API напоїв (локальний JSON без CORS)
 
-// Використовуємо CORS-проксі allorigins.win для обходу CORS обмежень
-// Запит з frontendu йде на allorigins, який з бекенду підтягує dane z TheCocktailDB
+// Локальне "API" - файл drinks.json у корені застосунку
+const LOCAL_DRINKS_URL = '/drinks.json';
 
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
-const API_BASE = 'https://www.thecocktaildb.com/api/json/v1/1/search.php?s=';
-
-// Отримання drinków по nazwie через проксі
-async function fetchDrinkByName(drinkName) {
+// Завантаження всіх напоїв з локального JSON
+async function fetchAllDrinks() {
     try {
-        const targetUrl = `${API_BASE}${encodeURIComponent(drinkName)}`;
-        const proxyUrl = `${CORS_PROXY}${encodeURIComponent(targetUrl)}`;
-
-        const response = await fetch(proxyUrl);
+        const response = await fetch(LOCAL_DRINKS_URL);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-
         const data = await response.json();
         return data.drinks || [];
     } catch (error) {
-        console.error(`Помилка завантаження ${drinkName} через CORS-проксі:`, error);
+        console.error('Помилка завантаження локальних напоїв:', error);
         return [];
     }
 }
 
-// Завантаження списку drinków для wielu nazw (у нас popularDrinks w app.js)
-async function fetchDrinksList(drinkNames) {
-    const allDrinks = [];
-    const uniqueIds = new Set();
-
-    for (const drinkName of drinkNames) {
-        try {
-            const drinks = await fetchDrinkByName(drinkName);
-            for (const drink of drinks) {
-                if (!uniqueIds.has(drink.idDrink)) {
-                    uniqueIds.add(drink.idDrink);
-                    allDrinks.push(drink);
-                }
-            }
-        } catch (error) {
-            console.error(`Помилка завантаження ${drinkName}:`, error);
-        }
+// Отримання напоїв за назвою (фільтрація на клієнті)
+async function fetchDrinkByName(drinkName) {
+    const allDrinks = await fetchAllDrinks();
+    if (!drinkName) {
+        return allDrinks;
     }
+    const term = drinkName.toLowerCase();
+    return allDrinks.filter(d =>
+        (d.strDrink && d.strDrink.toLowerCase().includes(term)) ||
+        (d.strInstructions && d.strInstructions.toLowerCase().includes(term))
+    );
+}
 
-    return allDrinks;
+// Завантаження списку напоїв (для popularDrinks) - у нашому випадку просто всі напої
+async function fetchDrinksList(drinkNames) {
+    return await fetchAllDrinks();
 }
 
 // Експорт функцій
 export {
     fetchDrinkByName,
     fetchDrinksList,
-    API_BASE,
-    CORS_PROXY
+    LOCAL_DRINKS_URL
 };
+
