@@ -20,8 +20,7 @@ import {
 } from './views.js';
 import { 
     shareDrink, 
-    initializeNativeFeatures, 
-    vibrateOnFavorite,
+    initializeNativeFeatures,
     findNearbyBars,
     showNotificationPrompt 
 } from './native-features.js';
@@ -258,6 +257,13 @@ function setupNavigation() {
     document.getElementById('share-btn').addEventListener('click', () => {
         shareDrink();
     });
+
+    const nearbyBarsBtn = document.getElementById('nearby-bars-btn');
+    if (nearbyBarsBtn) {
+        nearbyBarsBtn.addEventListener('click', () => {
+            findNearbyBars();
+        });
+    }
 }
 
 // Налаштування пошуку та фільтрів

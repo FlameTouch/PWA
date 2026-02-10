@@ -2,7 +2,6 @@
 // Модуль для роботи з відображенням UI
 
 import { getState, setCurrentDrink, setCurrentView, toggleFavorite } from './state.js';
-import { vibrateOnFavorite } from './native-features.js';
 
 // Перемикання між видами
 function switchView(viewId) {
@@ -45,7 +44,6 @@ function renderDrinks(drinks) {
             e.stopPropagation();
             const drinkId = btn.dataset.drinkId;
             toggleFavorite(drinkId);
-            vibrateOnFavorite();
             renderDrinks(drinks);
         });
     });
@@ -148,7 +146,6 @@ function showDrinkDetail(drinkId) {
     if (favoriteBtn) {
         favoriteBtn.addEventListener('click', () => {
             toggleFavorite(drink.idDrink);
-            vibrateOnFavorite();
             showDrinkDetail(drink.idDrink); 
         });
     }
@@ -188,7 +185,6 @@ function showFavorites() {
                 e.stopPropagation();
                 const drinkId = btn.dataset.drinkId;
                 toggleFavorite(drinkId);
-                vibrateOnFavorite();
                 showFavorites(); 
             });
         });

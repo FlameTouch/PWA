@@ -105,15 +105,7 @@ function hideNotificationPrompt() {
     prompt.classList.add('hidden');
 }
 
-// 3. Vibration API - вібрація при додаванні в улюблені
-function vibrateOnFavorite() {
-    if ('vibrate' in navigator) {
-        // Коротка вібрація при додаванні в улюблені
-        navigator.vibrate(50);
-    }
-}
-
-// 4. Geolocation API - знайти найближчі бари
+// 3. Geolocation API - знайти найближчі бари
 function findNearbyBars() {
     if (!navigator.geolocation) {
         alert('Geolocation is not supported by your browser');
@@ -146,19 +138,12 @@ function findNearbyBars() {
 // Ініціалізація всіх нативних функцій
 function initializeNativeFeatures() {
     initializeNotifications();
-    
-    // Додати кнопку для пошуку барів, якщо є кнопка share
-    const shareBtn = document.getElementById('share-btn');
-    if (shareBtn && navigator.geolocation) {
-        // Можна додати додаткову кнопку або використати існуючу
-    }
 }
 
 // Експорт
 export {
     shareDrink,
     initializeNativeFeatures,
-    vibrateOnFavorite,
     findNearbyBars,
     showNotificationPrompt,
     hideNotificationPrompt
