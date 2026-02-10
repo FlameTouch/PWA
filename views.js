@@ -18,17 +18,14 @@ function renderDrinks(drinks) {
     const drinksListEl = document.getElementById('drinks-list');
     const emptyStateEl = document.getElementById('empty-state');
 
-    // Показуємо ТІЛЬКИ напої з картинками
-    const drinksWithImages = drinks.filter(d => d.strDrinkThumb);
-
-    if (drinksWithImages.length === 0) {
+    if (drinks.length === 0) {
         drinksListEl.innerHTML = '';
         emptyStateEl.classList.remove('hidden');
         return;
     }
 
     emptyStateEl.classList.add('hidden');
-    drinksListEl.innerHTML = drinksWithImages.map(drink => {
+    drinksListEl.innerHTML = drinks.map(drink => {
         const isFavorite = appState.favorites.includes(drink.idDrink);
         return createDrinkCard(drink, isFavorite);
     }).join('');
@@ -47,7 +44,7 @@ function renderDrinks(drinks) {
             e.stopPropagation();
             const drinkId = btn.dataset.drinkId;
             toggleFavorite(drinkId);
-            renderDrinks(drinksWithImages);
+            renderDrinks(drinks);
         });
     });
 }
